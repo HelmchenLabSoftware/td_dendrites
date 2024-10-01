@@ -1,4 +1,4 @@
-# Unsigned prediction errors in cortical L5 apical dendrites during learning
+# Unsigned temporal difference errors in cortical L5 apical dendrites during learning
 
 ## Description
 
