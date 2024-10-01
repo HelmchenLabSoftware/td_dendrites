@@ -32,20 +32,15 @@ In order to rerun the full pipeline of simulations yourself and replot all the p
 
 Before rerunning the simulations, you can test whether the installation was successful. Just enter
 ```
-python main.py
-```
-
-This will plot all the panels (to the folder panels) from the existing simulation results and is equivalent to the command
-```
 python main.py plot
 ```
 
-To rerun all the simulations, enter
+This will plot all the panels (to the folder panels) from the existing simulation results. This is possible as the 'main' branch contains pre-simulated results in the the 'results' folder. These are ~1.5GB, if you want to avoid downloading these files and simulate them yourself, you can clone the 'clean' branch. To rerun all the simulations (except the extraction of the performance trace), enter
 ```
 python main.py simulate
 ```
 
-This will overwrite the current simulation outcomes in the 'results' folder. In order to extract the performance traces necessary for some panels yourself, you will have to then run Smith/getperfs.m with Matlab. Once the Matlab script is finished you can run
+This will overwrite any simulation outcomes present in the 'results' folder. In order to extract the performance traces necessary for some panels yourself, you will have to then run Smith/getperfs.m with Matlab. Once the Matlab script is finished you can run
 ```
 python main.py perf
 ```
