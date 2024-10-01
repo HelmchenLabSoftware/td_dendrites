@@ -2,7 +2,7 @@
 
 ## Description
 
-This program runs the simulations and plots the corresponding panels described in the manuscript 'Unsigned temporal difference errors in cortical L5 dendrites during learning'. This means simulating models of mice with L5 sensory pyramidal neurons learning a go/no-go sensory discrimination task.
+This program runs the simulations and plots the corresponding panels described in the manuscript 'Unsigned temporal difference errors in cortical L5 dendrites during learning'. This means simulating models of mice with L5 sensory pyramidal neurons learning a go/no-go sensory discrimination task from a sensory discrimination plagued by distracting signals.
 
 ### Installation
 
