@@ -1,3 +1,7 @@
+"""
+Helper functions and constants for the L5 apical dendrite model of sensory learning
+"""
+
 import torch
 import numpy as np
 from typing import Literal
@@ -10,7 +14,8 @@ SMITH_DIR = ROOT_DIR / 'Smith'  # Directory containing matlab scripts and matlab
 # Main simulation parameters
 LR = 0.016  # Common learning rate tuned to replicate experimental number of trials necessary to become expert
 THETA = 0.1  # Value of the activity threshold used in the w_ap plasticity rule
-N_Z = 203  # Number of distractor neurons
+N_Z = 203  # Number of total neurons (in the pure selectivity model)
+N_Z_MIXED = 17  # Number of total neurons (in the mixed-selectivity model)
 N_TRIALS = 1800  # Default number of trials simulated
 N_TRIALS_AP_INH = 4000  # Number of trials in case the apical dendrites are inhibited for the first 1800 trials
 MAX_GAIN = 10.  # Maximum possible apical gain
@@ -21,9 +26,10 @@ PUNISHMENT = -0.5  # Reward value in case of false alarm
 GAMMA = 1.  # TD learning gamma
 N_SEEDS = 10  # Number of pseudorandom seeds simulated
 HZ = 4  # Number of time steps simulated per second
-TONE_T = 0  # Time step when tone happens
-TEXTURE_T = HZ + 1  # Time step when texture is perceived
-N_TIME_STEPS = TONE_T + 4 * HZ + 2  # Total number of time steps per trial
+TONE_T = HZ  # Time step when tone happens (1s in trial)
+TEXTURE_T = 2 * HZ + 1  # Time step when texture is perceived (2.25s in trial)
+OUTCOME_T = 5 * HZ + 1  # Time when outcome is perceived (5.25s in trial)
+N_TIME_STEPS = 5 * HZ + 2 - TONE_T  # Total number of time steps per trial
 T1_IDX = 2  # Index of the texture 1 stimulus
 T2_IDX = 1  # Index of the texture 2 stimulus
 THETA_0 = 4.  # Default value for theta_0 in the mixed selectivity simulations
@@ -44,7 +50,7 @@ K_TD_DELTA: Key = 'td_delta'
 K_TIMINGS: Key = 'x_pre_t'
 K_W_AP: Key = 'w_ap'
 K_W_BAS: Key = 'w_bas'
-K_X_SOM: Key = 'x_som_texture'
+K_X_SOM_TXT: Key = 'x_som_texture'
 K_DENDRITE_SENSORY: Key = 'sensory_dendrite'
 K_DENDRITE_SENSORY_T1: Key = 'sensory_dendrite_t1'
 K_DENDRITE_SENSORY_T2: Key = 'sensory_dendrite_t2'
@@ -53,7 +59,7 @@ K_Z: Key = 'z'
 K_GAIN: Key = 'gain'
 KEYS_1D = [K_OUTCOME, K_CORRECT_TRIALS, K_PERFORMANCE, K_DENDRITE_OUTCOME]
 KEYS_2D = [K_V_HAT, K_TD_DELTA, K_TIMINGS, K_W_AP, K_DENDRITE_SENSORY, K_DENDRITE_SENSORY_T1, K_DENDRITE_SENSORY_T2,
-           K_X_SOM, K_Z, K_GAIN]
+           K_X_SOM_TXT, K_Z, K_GAIN]
 
 
 class Outcome(Enum):
@@ -91,7 +97,25 @@ def gain(x: torch.Tensor) -> torch.Tensor:
     :param x: apical activation
     :return: multiplicative gain
     """
-    return 1 + MAX_GAIN * np.clip(x - 1. / MAX_GAIN, 0, (MAX_GAIN-1) / MAX_GAIN)
+    return 1 + MAX_GAIN * torch.clip(x - 1. / MAX_GAIN, 0, (MAX_GAIN-1) / MAX_GAIN)
+
+
+def time_to_time_step(t: float) -> int:
+    """
+    Convert time in seconds to time step in the simulation.
+    :param t: Time in seconds
+    :return: Time step in the simulation
+    """
+    return int(t * HZ - TONE_T)
+
+
+def time_step_to_time(t: int) -> float:
+    """
+    Convert time step in the simulation to time in seconds.
+    :param t: Time step in the simulation
+    :return: Time in seconds
+    """
+    return t + TONE_T / HZ
 
 
 def get_path(simulation: Simulation = Simulation.DEFAULT, theta_0: float = THETA_0) -> Path:
@@ -125,7 +149,7 @@ def get_thetas_0() -> list[float]:
     return [1., 2., 3., 4., 5., 6., 7., 8.]
 
 
-def nan_array(shape: (int,)) -> np.ndarray:
+def nan_array(shape: tuple[int, ...]) -> np.ndarray:
     """
     Make a numpy array filled with nan.
     :param shape: Tuple of integers corresponding to the shape of the array

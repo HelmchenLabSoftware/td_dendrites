@@ -1,26 +1,28 @@
+"""
+Functions to generate the figures of the paper from the simulation results in the 'results' directory
+"""
+
+import warnings
 import matplotlib
 import matplotlib.pyplot as plt
-from matplotlib.patheffects import withStroke
 from math import floor
 from pickle import load
-from warnings import catch_warnings, filterwarnings, resetwarnings, simplefilter
-from scipy.stats import tukey_hsd, ranksums
+from scipy import stats
 from l5apical.parula import PARULA
 from l5apical.helper import *
 
-# Colors initializations
+# Colors
 COL_SENSORY = "#2985C4"
-COL_ITI = '#7b7b7bff'
-COL_TONE = "#4cf3edff"
+COL_ITI = '#cdcdcdff'
 COL_PRE = '#004977ff'
 COL_TEXTURE = "#ce583aff"
 COL_T1 = 'k'
 COL_T2 = '#9f9f9fff'
-COL_DISTRACTOR = COL_TONE
-COL_LATE = "#cdcdcdff"
+COL_DISTRACTOR = "#4cf3edff"
 COL_OUTCOME = "#eda922ff"
 COL_RESTORED = "#77c044ff"
-COL_EXPERT = (0, 0.9, 0.)
+COL_HIT = "#25b592ff"
+COL_CR = "#794783f8"
 GO_NOGO_MAP = matplotlib.colors.LinearSegmentedColormap.from_list(name="", colors=[COL_T2, COL_T1])
 
 # Dimensions for panels
@@ -32,7 +34,8 @@ PANEL_LABEL_HEIGHT = 0.11110236
 AXIS_WIDTH = 0.5
 LINE_WIDTH = 0.7
 MARKER_SIZE = 2
-PANEL_WIDTH = 6 / INCH
+FIG_WIDTH = 16 / INCH
+PANEL_WIDTH = FIG_WIDTH / 3.
 PANEL_HEIGHT = 4.5 / INCH
 FONT_SIZE = 6
 
@@ -44,6 +47,7 @@ SVG_DIR = 'svg'
 N_EXPERTS = 150  # Number of expert trials to plot
 N_AV_BIN = 20  # Number of available bins for histograms
 BIN_MAX = 6  # Maximal bin ID for histogram
+END_T = OUTCOME_T + 2  # Time step up to which to plot
 
 
 def get_results(simulation: Simulation = Simulation.DEFAULT, expert_aligned: bool = False, theta_0: float = THETA_0
@@ -59,11 +63,12 @@ def get_results(simulation: Simulation = Simulation.DEFAULT, expert_aligned: boo
         results = load(handle)
     if expert_aligned:
         expert_t = [int(results[s][K_EXPERT_T]) for s in range(N_SEEDS)]
-        earliest_expert = min(expert_t)
-        sample_ranges = [[expert_t[s] - earliest_expert, expert_t[s] + N_EXPERTS] for s in range(N_SEEDS)]
+        before_expert = min(expert_t)
+        after_expert = N_TRIALS - max(expert_t)
+        sample_ranges = [[expert_t[s] - before_expert, expert_t[s] + after_expert] for s in range(N_SEEDS)]
         for s in range(N_SEEDS):
             for k in [K_LEARNING_T, K_EXPERT_T]:
-                results[s][k] = results[s][k] - expert_t[s] + earliest_expert
+                results[s][k] = results[s][k] - expert_t[s] + before_expert
             for k in KEYS_1D:
                 results[s][k] = results[s][k][sample_ranges[s][0]:sample_ranges[s][1]]
             for k in KEYS_2D:
@@ -72,8 +77,8 @@ def get_results(simulation: Simulation = Simulation.DEFAULT, expert_aligned: boo
     return results
 
 
-def get_outcome_specific(outcome: Outcome, outcomes: np.ndarray | list[np.ndarray],
-                         values: np.ndarray | list[np.ndarray]) -> np.ndarray | list[np.ndarray]:
+def get_outcome_specific(outcome: Outcome, outcomes: type[np.ndarray | list[np.ndarray]],
+                         values: type[np.ndarray | list[np.ndarray]]) -> type[np.ndarray | list[np.ndarray]]:
     """
     From the array of values for each trial, only keep the ones that occurred in trials of a specific outcome and
     replace the other values with nan
@@ -106,8 +111,8 @@ def get_outcome_specific(outcome: Outcome, outcomes: np.ndarray | list[np.ndarra
     return vs
 
 
-def get_texture_specific(texture: bool, outcomes: np.ndarray | list[np.ndarray], values: np.ndarray | list[np.ndarray]
-                         ) -> np.ndarray | list[np.ndarray]:
+def get_texture_specific(texture: bool, outcomes: type[np.ndarray | list[np.ndarray]],
+                         values: type[np.ndarray | list[np.ndarray]]) -> type[np.ndarray | list[np.ndarray]]:
     """
     From the array of values for each trial, only keep the ones that occurred in trials in which a specific texture was
     shown replace the other values with nan
@@ -146,7 +151,7 @@ def get_texture_specific(texture: bool, outcomes: np.ndarray | list[np.ndarray],
     return vs
 
 
-def batch_nan_stat(values: np.ndarray | list[np.ndarray], batch_size: int = 10, stat: str = 'mean') -> np.ndarray:
+def batch_nan_stat(values: type[np.ndarray | list[np.ndarray]], batch_size: int = 10, stat: str = 'mean') -> np.ndarray:
     """
     Extract mean or standard deviation for sequential batches of value arrays.
     :param values: Array (1D or 2D) or list of 1D-arrays of values to process
@@ -154,8 +159,8 @@ def batch_nan_stat(values: np.ndarray | list[np.ndarray], batch_size: int = 10, 
     :param stat: 'mean' or 'std' to specify the statistic to extract
     :return: 1D or 2D array of the batch-dependent statistics (mean or std)
     """
-    with catch_warnings():
-        simplefilter("ignore", category=RuntimeWarning)
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore", category=RuntimeWarning)
         if isinstance(values, list):
             n_batches = len(values[0]) // batch_size
             batch_stat = np.zeros(n_batches)
@@ -323,20 +328,19 @@ def plot_trace(x, y, color="b", alpha=0.5, label=None, ax=None, z=0, line_style=
             ax.plot(x[idxs], y[idxs], **ls)
 
 
-def plot_t(ax: plt.Axes, y: float, iti: float = 1) -> None:
+def plot_t(ax: plt.Axes, y: float, iti: float = 0, end: float = END_T) -> None:
     """
     Plot important time windows of the trial as colored sections of a horizontal bar
     :param ax: axis object to plot on
     :param y: y-axis height at which to plot the bar
-    :param iti: length of the inter-trial interval bar to plot
+    :param iti: Time (in HZ freq) when the inter-trial interval bar to plot begins
+    :param end: Time (in HZ freq) when the outcome bar ends
     """
     ls = {'linewidth': 4, 'clip_on': False, 'zorder': 0, 'solid_capstyle': 'butt'}
-    ax.plot([TONE_T - iti * HZ, TONE_T], [y, y], COL_ITI, **ls)
-    ax.plot([TONE_T, TONE_T + HZ / 2.], [y, y], COL_TONE, **ls)
-    ax.plot([TONE_T + HZ/2, TEXTURE_T - 1], [y, y], COL_PRE, **ls)
-    ax.plot([TEXTURE_T - 1, TEXTURE_T - 1 + HZ], [y, y], COL_TEXTURE, **ls)
-    ax.plot([TEXTURE_T - 1 + HZ, TONE_T + 4 * HZ], [y, y], COL_LATE, **ls)
-    ax.plot([TONE_T + 4 * HZ, TONE_T + 4 * HZ + 3], [y, y], COL_OUTCOME, **ls)
+    ax.plot([iti * HZ, TONE_T], [y, y], COL_ITI, **ls)
+    ax.plot([TONE_T, TEXTURE_T], [y, y], COL_PRE, **ls)
+    ax.plot([TEXTURE_T, OUTCOME_T - 1], [y, y], COL_TEXTURE, **ls)
+    ax.plot([OUTCOME_T - 1, end], [y, y], COL_OUTCOME, **ls)
 
 
 def plot_perf_eg(saving: bool = True, mean: bool = True, sim: Simulation = Simulation.DEFAULT,
@@ -361,9 +365,13 @@ def plot_perf_eg(saving: bool = True, mean: bool = True, sim: Simulation = Simul
         std = np.std(perfs, axis=0)
         ax.fill_between(trials, mean - std, mean + std, clip_on=False, color='k', alpha=0.5, lw=0)
         ax.plot(trials, mean, 'k')
+        xp_t = sum([results[seed][K_EXPERT_T] for seed in range(N_SEEDS)]) / N_SEEDS
+
     else:
         seed = 0
         ax.plot(trials, results[seed][K_PERFORMANCE], 'k')
+        xp_t = results[seed][K_EXPERT_T]
+    ax.plot([xp_t, xp_t], [0, 1], 'r--', lw=0.5, zorder=0)
     plt.xlim([0, N_TRIALS])
     plt.ylim([0, 1])
     plt.ylabel("Performance")
@@ -382,6 +390,120 @@ def plot_perf_eg(saving: bool = True, mean: bool = True, sim: Simulation = Simul
     ax.spines['right'].set_visible(False)
     adjust_figure(fig=fig)
     save_or_show(saving=saving, plot_dir=PLOT_DIR, plot_name=save_name)
+
+
+def plot_v_hat(saving=True, outcome_types: tuple[Outcome, ...] = (Outcome.HIT, Outcome.CR),
+               save_name: str = 'v_hat_dynamics') -> None:
+    """
+    Dynamic of the state value estimate (V) during trials of specific outcome types for expert agents and the
+    corresponding dynamic changes of the estimate (Delta V) and unsigned changes of the estimate (|Delta V|).
+    :param saving: boolean encoding whether to save (or just display) the plot.
+    :param outcome_types: tuple of outcome type to plot.
+    :param save_name: name under which to save the plot.
+    """
+
+    # Get value estimates and trial outcomes
+    results = get_results()
+    outcomes = [results[s][K_OUTCOME] for s in range(N_SEEDS)]
+    v_preds = [results[s][K_V_HAT] for s in range(N_SEEDS)]
+
+    # Figure cosmetics
+    n_outcomes = len(outcome_types)
+    colors = {Outcome.HIT: COL_HIT, Outcome.CR: COL_CR, Outcome.FA: 'palevioletred', Outcome.MISS: 'olivedrab'}
+    y_labels = ('Naïve\n$\widehat{V}$', 'Expert\n$\widehat{V}$', '$\Delta \widehat{V}_t$', '$|\Delta \widehat{V}_t|$')
+    labels = {Outcome.HIT: 'Hit', Outcome.CR: 'CR', Outcome.FA: 'FA', Outcome.MISS: 'Miss'}
+
+    # Define time steps to plot before the cue and after the outcome
+    x = np.arange(END_T+1, dtype=int)
+    simulated_x_ts = np.arange(TONE_T, END_T, dtype=int)
+
+    # Define the trial windows for naive and expert learning stages
+    trial_windows = (np.arange(5), np.arange(N_TRIALS - 50, N_TRIALS))
+
+    # Variables to compute the largest y-axis range. This will be used to maintain the same y-scale across all plots
+    bottom = 0.
+    top = 0.
+    y_diff = 0.
+
+    # Init figure
+    set_style()
+    n_rows = 4 * n_outcomes + 1
+    fig_size = (FIG_WIDTH / 4., 4 * n_outcomes / INCH)
+    h_ratios = 4 * n_outcomes * [3] + [1]
+    fig, axs = plt.subplots(nrows=n_rows, figsize=fig_size, sharex='all', height_ratios=h_ratios)
+
+    # Plot the Hit case and the CR case
+    for i in range(n_outcomes):
+
+        # Plot the naive and expert learning stages of the state value estimate
+        r0 = i * 4
+        outcome_type = outcome_types[i]
+        color = colors[outcome_type]
+        v_preds_outcome = get_outcome_specific(outcome=outcome_type, outcomes=outcomes, values=v_preds)
+        for j, window in enumerate(trial_windows):
+
+            # Process the value estimate in the desired window of trials
+            v_preds_outcome_window = np.array([v_preds_outcome[s][window, :] for s in range(N_SEEDS)])
+            vp_mean, vp_ste = np.zeros(len(x)), np.zeros(len(x))
+            vp_mean[simulated_x_ts] = np.nanmean(v_preds_outcome_window, axis=(0, 1))
+            vp_ste[simulated_x_ts] = np.nanstd(v_preds_outcome_window, axis=(0, 1)) / np.sqrt(N_SEEDS)
+
+            # Plot the traces with standard error
+            axs[r0 + j].fill_between(x, vp_mean - vp_ste, vp_mean + vp_ste, color=color, alpha=0.3, linewidth=0.)
+            axs[r0 + j].plot(x, vp_mean, color, label=labels[outcome_type])
+
+            # Update the lowest and highest values to plot in the y-axis range
+            bottom = min(bottom, np.min(vp_mean - vp_ste))
+            top = max(top, np.max(vp_mean + vp_ste))
+            y_diff = max(top - bottom, y_diff)
+
+        # Compute the signed and unsigned change of state-value estimate during the trial and plot with bars
+        v_preds_outcome_window = np.array([v_preds_outcome[s][trial_windows[1], :] for s in range(N_SEEDS)])
+        dv_dt = np.diff(v_preds_outcome_window, axis=2)
+        for j in (2, 3):
+
+            # Process the data
+            if j == 2:
+                y = dv_dt
+            else:
+                y = np.abs(dv_dt)
+            dvdt_mean = np.nanmean(y, axis=(0, 1))
+            dvdt_ste = np.nanstd(y, axis=(0, 1)) / np.sqrt(N_SEEDS)
+
+            # Bar plot
+            axs[r0 + j].bar(
+                x=simulated_x_ts[:-1] + 0.5, height=dvdt_mean, width=0.9, color=color, yerr=dvdt_ste, bottom=0.
+            )
+
+            # Update the lowest and highest values to plot in the y-axis range
+            y_lim = axs[r0 + j].get_ylim()
+            y_diff = max(y_lim[1] - y_lim[0], y_diff)
+
+        # Cosmetics like removing axes, setting y-label and adding horizontal dashed line for zero
+        for j in range(4):
+            axs[r0 + j].plot([x[0], x[-1]], [0., 0.], 'k--', dashes=(5, 2), linewidth=AXIS_WIDTH, clip_on=False)
+            axs[r0 + j].xaxis.set_visible(False)
+            plt.setp(axs[r0 + j].spines.values(), visible=False)
+            axs[r0 + j].tick_params(left=False, labelleft=False)
+            axs[r0 + j].set_ylabel(y_labels[j], rotation='horizontal', verticalalignment='bottom', ha='center', y=0)
+
+    # Adjust the y-axis range for the scale to be the same across all plots
+    for row in range(n_rows-1):
+        ax_bottom = min(axs[row].get_ylim()[0], -0.05)
+        axs[row].set_ylim([ax_bottom, ax_bottom + y_diff])
+
+    # Colored illustration of time windows
+    plot_t(ax=axs[-1], y=0, end=x[-1])
+    axs[-1].set_axis_off()
+
+    # Finalize and save/show the figure
+    txt_style = {'ha': 'right', 'va': 'center', 'fontsize': FONT_SIZE}
+    for i, outcome_type in enumerate(outcome_types):
+        ax = axs[i * 4]
+        ax.text(x=0.95, y=0.3, s=labels[outcome_type], color=colors[outcome_type], transform=ax.transAxes, **txt_style)
+    plt.suptitle('State-value estimate')
+    adjust_figure(fig=fig)
+    save_or_show(saving=saving, plot_dir=PLOT_DIR, plot_name=save_name, plot_dpi=150)
 
 
 def plot_apical_raster(outcome: Outcome, expert_aligned: bool = False) -> None:
@@ -408,7 +530,7 @@ def plot_apical_raster(outcome: Outcome, expert_aligned: bool = False) -> None:
         n_trials = N_TRIALS
         t_min, t_max = 1, N_TRIALS
     n_batches = n_trials // batch_size
-    keys = [[K_DENDRITE_SENSORY_T1, K_DENDRITE_SENSORY_T2], [K_DENDRITE_OUTCOME, K_DENDRITE_OUTCOME]]
+    keys = [[K_DENDRITE_OUTCOME, K_DENDRITE_OUTCOME], [K_DENDRITE_SENSORY_T1, K_DENDRITE_SENSORY_T2]]
     results = get_results(expert_aligned=expert_aligned)
     outcomes = [results[s][K_OUTCOME] for s in range(N_SEEDS)]
     fig, axs = plt.subplots(nrows=rows, ncols=cols, figsize=(cols * PANEL_WIDTH, rows * PANEL_HEIGHT))
@@ -432,7 +554,7 @@ def plot_apical_raster(outcome: Outcome, expert_aligned: bool = False) -> None:
                 else:
                     apical = np.nanmean(outcome_spec_data, axis=0)
             img = np.pad(array=apical, pad_width=((0, 0), (HZ, 1)))
-            axs[i, j].imshow(img, aspect='auto', extent=(-HZ, TONE_T + 4 * HZ + 3, t_max, t_min),
+            axs[i, j].imshow(img, aspect='auto', extent=(0, END_T, t_max, t_min),
                              vmin=apical_transfer(0.), vmax=1., cmap=cmap)
             plot_t(ax=axs[i, j], y=t_max + (t_max-t_min) * 0.02)
             c_map_ax = axs[i, j].inset_axes([0., cb_width, cb_width, 1 - cb_width])
@@ -443,48 +565,257 @@ def plot_apical_raster(outcome: Outcome, expert_aligned: bool = False) -> None:
                 axs[i, j].spines[pos].set_visible(False)
 
             axs[i, j].set_ylim([t_max + (t_max-t_min) * 0.04, None])
-            axs[i, j].set_xlim([-0.99 - HZ, None])
+            axs[i, j].set_xlim([-0.99, None])
             if i == 1:
                 axs[i, j].set_xlabel('Trial time')
-                axs[i, j].set_xticks([TONE_T + 0.5, TEXTURE_T + 0.5, TONE_T + 4 * HZ + 1.5],
+                axs[i, j].set_xticks([TONE_T + 0.5, TEXTURE_T + 0.5, OUTCOME_T + 0.5],
                                      ['Tone', 'Texture', 'Outcome'], zorder=10)
             else:
                 axs[i, j].set_xticks([])
             if j == 0:
                 axs[i, j].set_yticks(y_ticks)
                 if i == 0:
-                    axs[i, j].set_ylabel('Sensory Dendrite\n\nTrial ID')
-                else:
                     axs[i, j].set_ylabel('Outcome Dendrite\n\nTrial ID')
+                else:
+                    axs[i, j].set_ylabel('Sensory Dendrite\n\nTrial ID')
             else:
                 axs[i, j].set_yticks(y_ticks, [''] * len(y_ticks))
-    axs[0, 0].title.set_text('Go texture neuron')
-    axs[0, 1].title.set_text('No-go texture neuron')
+    axs[0, 0].title.set_text('Go neuron')
+    axs[0, 1].title.set_text('NoGo neuron')
     adjust_figure(fig=fig, h_space=0.05)
 
 
-def f3b_performance_eg(saving: bool = True) -> None:
+def plot_apical_trace_boxplot(saving=True, verbose: bool = False, outcome: Outcome = None) -> None:
+    """
+    Evolution of apical activity with learning during different trial windows and for each dendrite type as well as
+    box-plots of activity depending on the learning phase and statistical significance between phases. The figure can be
+    produced for specific trial outcome types (Hits, Misses, CRs or FAs) or for all trials (outcome=None).
+    :param saving: boolean encoding whether to save (or just display) the plot.
+    :param verbose: whether to print out p-values
+    :param outcome: the outcome type to plot the traces for. If None, all trial types are included.
+    """
+    # Initializations
+    batch_size = 50
+    nt = min(N_TRIALS, 500 + N_EXPERTS)
+    p_cmap = get_performance_cm()
+    cb_width = 0.05
+    window_labels = ("Cue", "Touch", "Outcome")
+    tcolors = (COL_PRE, COL_TEXTURE, COL_OUTCOME)
+    window_ids = list(range(len(window_labels)))
+    plot_order = list(reversed(window_ids))
+    branch_names = ("Outcome dendrites", "Sensory dendrites")
+    n_branches = len(branch_names)
+    title_col = (COL_OUTCOME, COL_SENSORY)
+    learning_phase_label = ('N', 'L', 'E')
+    n_l_phase = len(learning_phase_label)
+    n_seeds = N_SEEDS
+    if outcome is None:
+        plot_name = 'fig_4g_apical_responses'
+        outcome_label = 'All trial types'
+    elif outcome == Outcome.HIT:
+        plot_name = 'fig_s13_apical_responses_hit'
+        outcome_label = 'Hit trials'
+    elif outcome == Outcome.CR:
+        plot_name = 'fig_s13_apical_responses_cr'
+        outcome_label = 'CR trials'
+    elif outcome == Outcome.FA:
+        plot_name = 'fig_s13_apical_responses_fa'
+        outcome_label = 'FA trials'
+    elif outcome == Outcome.MISS:
+        plot_name = 'fig_s13x_apical_responses_miss'
+        outcome_label = 'Miss trials'
+    else:
+        raise ValueError(outcome)
+
+    # Initialize figure that will be split between traces (left) and boxplots (right)
+    set_style()
+    fig = plt.figure(constrained_layout=True, figsize=(0.5 * FIG_WIDTH, 8 / INCH))
+    sub_figs = fig.subfigures(1, 2, width_ratios=[3, 1.5], wspace=0.07)
+    axs = sub_figs[0].subplots(nrows=n_branches, ncols=1)
+
+    # Get data for plotting
+    trials = np.zeros(0)
+    rs = get_results(expert_aligned=True)
+    apical_sensory = [rs[s][K_DENDRITE_SENSORY] for s in range(n_seeds)]
+    apical_outcome = [rs[s][K_DENDRITE_OUTCOME] for s in range(n_seeds)]
+
+    if outcome is not None:
+        outcomes = [rs[s][K_OUTCOME] for s in range(n_seeds)]
+        apical_sensory = get_outcome_specific(outcome=outcome, outcomes=outcomes, values=apical_sensory)
+        apical_outcome = get_outcome_specific(outcome=outcome, outcomes=outcomes, values=apical_outcome)
+
+    y_out = np.array([apical_transfer(torch.zeros(n_seeds, len(apical_outcome[0]))).numpy(),
+                      apical_transfer(torch.zeros(n_seeds, len(apical_outcome[0]))).numpy(),
+                      apical_outcome])
+    y_sen = np.array([[apical_sensory[s][:, 0] for s in range(n_seeds)],
+                      [apical_sensory[s][:, TEXTURE_T - TONE_T] for s in range(n_seeds)],
+                      [apical_sensory[s][:, -1] for s in range(n_seeds)]])
+    ys = np.stack([y_out, y_sen], axis=0)
+
+    # Plot traces with standard error
+    for dendrite_type in range(n_branches):
+        for trial_window in window_ids:
+            y = {"mean": batch_nan_stat(ys[dendrite_type, trial_window, :, :], batch_size=batch_size),
+                 "std": batch_nan_stat(ys[dendrite_type, trial_window, :, :], batch_size=batch_size, stat='std') / np.sqrt(N_SEEDS)}
+            trials = np.linspace(start=N_EXPERTS-nt, stop=N_EXPERTS, num=len(y['mean']), endpoint=False)
+            plot_trace(
+                trials, y, color=tcolors[trial_window], label=window_labels[trial_window], ax=axs[dendrite_type], alpha=0.2
+            )
+
+    # Figure cosmetics
+    for dendrite_type in range(n_branches):
+
+        # Colorbar of learning progression
+        c_map_ax = axs[dendrite_type].inset_axes([0, 0., 1, cb_width])
+        cb = matplotlib.colorbar.ColorbarBase(c_map_ax, cmap=p_cmap, orientation='horizontal')
+        cb.outline.set_visible(False)
+        cb.set_ticks([])
+
+        # Expert line
+        axs[dendrite_type].vlines(x=0, ymin=0, ymax=1, color='k', linestyle='--', linewidth=AXIS_WIDTH)
+
+        # Axis and labeling
+        axs[dendrite_type].set_xlim([trials[0], trials[-1]])
+        axs[dendrite_type].set_ylim([-0.05, 1.01])
+        axs[dendrite_type].spines[['top', 'right']].set_visible(False)
+        axs[dendrite_type].set_xticks([-500, -400, -300, -200, -100, 0, 100], ['', '-400', '', '-200', '', '0', '100'])
+        axs[dendrite_type].set_yticks([0, 0.5, 1.])
+        axs[dendrite_type].set_yticklabels([0., 0.5, 1.])
+        axs[dendrite_type].spines['left'].set_bounds(0, 1.)
+        axs[dendrite_type].set_ylabel('Apical activity')
+        axs[dendrite_type].set_title(branch_names[dendrite_type], color=title_col[dendrite_type])
+        if dendrite_type == n_branches - 1:
+            axs[-1].set_xlabel("Trial ID")
+            axs[1].legend(loc='upper left', frameon=False)
+        else:
+            axs[dendrite_type].set_xticklabels([])
+            axs[dendrite_type].text(0 - 0.03 * (trials[-1] - trials[0]), 0.95, outcome_label, ha='right')
+
+    # Get the unaligned data
+    rs = get_results(expert_aligned=False)
+    apical_sensory = [rs[s][K_DENDRITE_SENSORY] for s in range(n_seeds)]
+    apical_outcome = [rs[s][K_DENDRITE_OUTCOME] for s in range(n_seeds)]
+    if outcome is not None:
+        outcomes = [rs[s][K_OUTCOME] for s in range(n_seeds)]
+        apical_sensory = get_outcome_specific(outcome=outcome, outcomes=outcomes, values=apical_sensory)
+        apical_outcome = get_outcome_specific(outcome=outcome, outcomes=outcomes, values=apical_outcome)
+    y_out = np.array([apical_transfer(torch.zeros(n_seeds, len(apical_outcome[0]))).numpy(),
+                      apical_transfer(torch.zeros(n_seeds, len(apical_outcome[0]))).numpy(),
+                      apical_outcome])
+    y_sen = np.array([[apical_sensory[s][:, 0] for s in range(n_seeds)],
+                      [apical_sensory[s][:, TEXTURE_T - TONE_T] for s in range(n_seeds)],
+                      [apical_sensory[s][:, -1] for s in range(n_seeds)]])
+    ys = np.stack([y_out, y_sen], axis=0)
+
+    # Init the boxplot subfigure
+    sub_sub_figs = sub_figs[1].subfigures(2, 1)
+    n_trial_windows = 3
+    boxplot_style = {'showfliers': False,
+                     'widths': 0.4,
+                     'medianprops': {'color': 'k', 'linewidth': AXIS_WIDTH, 'solid_capstyle': 'butt'},
+                     'boxprops': {'linewidth': 0, 'facecolor': 'k'},
+                     'whiskerprops': {'clip_on': False, 'linewidth': AXIS_WIDTH},
+                     'capprops': {'clip_on': False, 'linewidth': AXIS_WIDTH}}
+
+    # Init statistics variables
+    idx_pair = [[0, 1], [1, 2], [0, 2]]
+    str_pair = ['naïve vs. learn', 'learn vs. expert', 'naïve vs. expert']
+    stat_style = {'va': 'center', 'ha': 'center', 'color': 'k', 'fontsize': FONT_SIZE-2, 'weight': 'bold'}
+    stat_pair_ids = [0, 1, 2]
+
+    # Plot the boxplots and statistical significance
+    warnings.simplefilter("ignore")
+    for dendrite_type in range(n_branches):
+        sub_sub_figs[dendrite_type].text(-0.07, 0.5, 'Apical activity', va='center', rotation='vertical')
+        axs = sub_sub_figs[dendrite_type].subplots(nrows=n_trial_windows, ncols=1)
+        for ax_i, trial_window in enumerate(plot_order):
+
+            # Get data by learning phase
+            data = ys[dendrite_type, trial_window, :, :]
+            ys_by_phase = [np.zeros(n_seeds) for _ in range(n_l_phase)]
+            for seed in range(n_seeds):
+                ys_by_phase[0][seed] = np.nanmean(data[seed, :rs[seed][K_LEARNING_T]])
+                ys_by_phase[1][seed] = np.nanmean(data[seed, rs[seed][K_LEARNING_T]:rs[seed][K_EXPERT_T]])
+                ys_by_phase[2][seed] = np.nanmean(data[seed, rs[seed][K_EXPERT_T]:])
+
+            # Clean data (sometimes empty learning phase led to NaNs)
+            for p in range(n_l_phase):
+                ys_by_phase[p] = ys_by_phase[p][~np.isnan(ys_by_phase[p])]
+
+            # Plot the boxplots
+            boxplot_style['boxprops']['facecolor'] = tcolors[trial_window]
+            axs[ax_i].boxplot(ys_by_phase, positions=stat_pair_ids, patch_artist=True, **boxplot_style)
+
+            # Run the Tuckey HSD statistical test
+            if verbose:
+                print(f'{branch_names[dendrite_type]} during the {window_labels[trial_window]} window:')
+            try:
+                p_values = stats.tukey_hsd(*tuple(ys_by_phase)).pvalue
+            except RuntimeWarning:
+                p_values = np.array([[1., 1., 1.], [1., 1., 1.], [1., 1., 1.]])
+
+            # Plot significance stars
+            for k in stat_pair_ids:
+                s = get_significance(p_value=p_values[idx_pair[k][0], idx_pair[k][1]])
+                if s != get_significance(1.):
+                    sx = sum(idx_pair[k]) / 2.
+                    sy = 1.2 + 0.3 * k
+                    axs[ax_i].hlines(y=sy, xmin=idx_pair[k][0], xmax=idx_pair[k][1], color='k', clip_on=False, linewidth=AXIS_WIDTH)
+                    axs[ax_i].text(sx, sy + 0.04, s, **stat_style)
+                if verbose:
+                    print(f'  - {str_pair[k]} {s} (p-value={p_values[idx_pair[k][0], idx_pair[k][1]]:.1e})')
+
+            # Axes cosmetics
+            axs[ax_i].set_xlim((-0.4, 2.4))
+            axs[ax_i].set_ylim((0, 2))
+            axs[ax_i].spines[['top', 'right']].set_visible(False)
+            axs[ax_i].tick_params(axis=u'x', which=u'both', length=0)
+            axs[ax_i].set_yticks([0, 1., 2.], ['0', '', '2'])
+            ax_right = axs[ax_i].twinx()
+            ax_right.spines[['top', 'right']].set_visible(False)
+            ax_right.set_yticks([])
+            ax_right.set_ylabel(window_labels[trial_window], color=tcolors[trial_window], labelpad=7, ha='center', va='center')
+            if ax_i == n_trial_windows - 1:
+                axs[ax_i].set_xticklabels(['N', 'L', 'E'])
+            else:
+                axs[ax_i].set_xticklabels([])
+    warnings.simplefilter("default")
+
+    # Save or show figure
+    save_or_show(saving=saving, plot_dir=PLOT_DIR, plot_dpi=300, plot_name=plot_name)
+
+
+def f4c_performance_eg(saving: bool = True) -> None:
     """
     Plot an example performance trace for the default simulation
     :param saving: boolean encoding whether to save (or just display) the plot.
     """
-    plot_perf_eg(saving=saving, mean=False, sim=Simulation.DEFAULT, save_name='fig_3b_performance_example')
+    plot_perf_eg(saving=saving, mean=False, sim=Simulation.DEFAULT, save_name='fig_4c_performance_example')
 
 
-def f3c_apical_dendrites_raster_plots(saving: bool = True) -> None:
+def f4d_expert_v_pred(saving=True) -> None:
+    """
+    Dynamic of the state value estimate (V) during Hit and CR trials for expert agents and the
+    corresponding dynamic changes of the estimate (Delta V) and unsigned changes of the estimate (|Delta V|).
+    :param saving: boolean encoding whether to save (or just display) the plot.
+    """
+    plot_v_hat(saving=saving, outcome_types=(Outcome.HIT, Outcome.CR), save_name='fig_4d_expert_v_pred')
+
+
+def f4e_apical_dendrites_raster_plots(saving: bool = True) -> None:
     """
     Raster plots of the evolution of responses for each apical dendrite type (sensory and outcome dendrites) for the go
     and the no-go texture selective neuron during either Hit or CR trials.
     :param saving: boolean encoding whether to save (or just display) the plot.
     """
     plot_apical_raster(outcome=Outcome.HIT)
-    save_or_show(saving=saving, plot_dir=PLOT_DIR, plot_name='fig_3c_apical_hit', plot_dpi=500)
+    save_or_show(saving=saving, plot_dir=PLOT_DIR, plot_name='fig_4e_apical_hit', plot_dpi=300)
 
     plot_apical_raster(outcome=Outcome.CR)
-    save_or_show(saving=saving, plot_dir=PLOT_DIR, plot_name='fig_3c_apical_cr', plot_dpi=500)
+    save_or_show(saving=saving, plot_dir=PLOT_DIR, plot_name='fig_4e_apical_cr', plot_dpi=300)
 
 
-def f3c_soma_raster_plots(saving: bool = True, expert_aligned: bool = False):
+def f4e_soma_raster_plots(saving: bool = True, expert_aligned: bool = False):
     """
     Raster plots of the evolution of responses for somatic activity of the no-go texture selective neuron during type of
     trial (Hit, CR, FA, Miss).
@@ -513,21 +844,20 @@ def f3c_soma_raster_plots(saving: bool = True, expert_aligned: bool = False):
     outcome_types = [[Outcome.HIT, Outcome.MISS], [Outcome.FA, Outcome.CR]]
     t_idxs = [T1_IDX, T2_IDX]
     for k in range(2):
-        data = [results[s][K_X_SOM][:, t_idxs[k]] for s in range(N_SEEDS)]
+        data = [results[s][K_X_SOM_TXT][:, t_idxs[k]] for s in range(N_SEEDS)]
         fig, axs = plt.subplots(nrows=rows, ncols=cols, figsize=(cols * PANEL_WIDTH, rows * PANEL_HEIGHT))
         for i in range(rows):
             for j in range(cols):
                 out_spec_data = np.abs(np.array(get_outcome_specific(outcome=outcome_types[i][j], outcomes=outcomes,
                                                                      values=data)))
-                mean_data = np.zeros((n_batches, N_TIME_STEPS))
+                mean_data = np.zeros((n_batches, END_T))
                 if batch_size > 1:
                     for b in range(n_batches):
                         mean_data[b, TEXTURE_T] = np.nanmean(out_spec_data[:, b * batch_size:(b + 1) * batch_size])
                 else:
                     mean_data = np.nanmean(out_spec_data, axis=0)
                 mean_data[np.isnan(mean_data)] = 0
-                img = np.pad(array=mean_data, pad_width=((0, 0), (HZ, 1)))
-                axs[i, j].imshow(img, aspect='auto', extent=(-HZ, TONE_T + 4 * HZ + 3, t_max, t_min), vmin=0.,
+                axs[i, j].imshow(mean_data, aspect='auto', extent=(0, END_T, t_max, t_min), vmin=0.,
                                  vmax=MAX_GAIN, cmap=cmap)
                 plot_t(ax=axs[i, j], y=t_max + (t_max-t_min) * 0.02)
                 c_map_ax = axs[i, j].inset_axes([0., cb_width, cb_width, 1 - cb_width])
@@ -537,208 +867,118 @@ def f3c_soma_raster_plots(saving: bool = True, expert_aligned: bool = False):
                 for pos in ['right', 'top', 'bottom', 'left']:
                     axs[i, j].spines[pos].set_visible(False)
                 axs[i, j].set_ylim([t_max + (t_max-t_min) * 0.04, None])
-                axs[i, j].set_xlim([-0.99 - HZ, None])
+                axs[i, j].set_xlim([-0.99, None])
                 if i == 1:
                     axs[i, j].set_xlabel('Trial time')
-                    axs[i, j].set_xticks([TONE_T + 0.5, TEXTURE_T + 0.5, TONE_T + 4 * HZ + 1.5],
+                    axs[i, j].set_xticks([TONE_T + 0.5, TEXTURE_T + 0.5, OUTCOME_T + 0.5],
                                          ['Tone', 'Texture', 'Outcome'], zorder=10)
                 else:
                     axs[i, j].set_xticks([])
                 if j == 0:
                     axs[i, j].set_yticks(y_ticks)
                     if i == 0:
-                        axs[i, j].set_ylabel('Go Texture\n\nTrial ID')
+                        axs[i, j].set_ylabel('Go neuron\n\nTrial ID')
                     else:
-                        axs[i, j].set_ylabel('NoGo Texture\n\nTrial ID')
+                        axs[i, j].set_ylabel('NoGo neuron\n\nTrial ID')
                 else:
                     axs[i, j].set_yticks(y_ticks, [''] * len(y_ticks))
         axs[0, 0].title.set_text('Lick')
         axs[0, 1].title.set_text('No Lick')
 
         adjust_figure(fig=fig, h_space=0.05)
-        save_or_show(saving=saving, plot_dir=PLOT_DIR, plot_name=f'fig_3c_t{k+1}_soma', plot_dpi=500)
+        save_or_show(saving=saving, plot_dir=PLOT_DIR, plot_name=f'fig_4e_t{k+1}_soma', plot_dpi=300)
 
 
-def f3d_expert_v_pred(saving=True) -> None:
+def f4f_sen_dendrite(saving: bool = True, expert_aligned: bool = False) -> None:
     """
-    Dynamic of the state value estimate (V) during either Hit or CR trials for expert agents and the corresponding
-    dynamic changes of the estimate (Delta V) and unsigned changes of the estimate (|Delta V|).
+    Multi-panel plot showing:
+    - Evolution of the pre-synaptic input to sensory dendrites across learning as raster plot
+    - Evolution of the sensory dendrite synaptic weight strengths depending on the bottom-up (basal) selectivity of the
+      pyramidal neurons (with learning)
+    - Evolution of the multiplicative gains of different stimuli with learning
     :param saving: boolean encoding whether to save (or just display) the plot.
+    :param expert_aligned: Whether to align trials to the first expert trial
     """
-    n_expert_t = 50
-    results = get_results()
-    outcomes = [results[s][K_OUTCOME] for s in range(N_SEEDS)]
-    v_preds = [results[s][K_V_HAT] for s in range(N_SEEDS)]
-    outcome_type = [Outcome.HIT, Outcome.CR]
-    iti = 0.5
-    bottoms = [1., -1.1, 0.]
-    top = 0.
+
+    # Initializations and loading data
+    if expert_aligned:
+        n_trials = 500 + N_EXPERTS
+        t_min, t_max = 1 - n_trials + N_EXPERTS, N_EXPERTS
+    else:
+        n_trials = N_TRIALS
+        t_min, t_max = 1, N_TRIALS
+    results = get_results(expert_aligned=expert_aligned)
+    batch_size = 50
+    n_batches = n_trials // batch_size
     set_style()
-    fig, axs = plt.subplots(nrows=3, ncols=2, figsize=(2 * PANEL_WIDTH, 3 * PANEL_HEIGHT))
-    for i in range(2):
-        v_preds_outcome = get_outcome_specific(outcome=outcome_type[i], outcomes=outcomes, values=v_preds)
-        v_preds_outcome = np.array([v_preds_outcome[s][-n_expert_t:, :] for s in range(N_SEEDS)])
-        vp_mean = np.nanmean(v_preds_outcome, axis=(0, 1))
-        vp_ste = np.nanstd(v_preds_outcome, axis=(0, 1)) / np.sqrt(N_SEEDS)
-        bottoms[0] = min(bottoms[0], np.min(vp_mean - vp_ste))
-        top = max(top, np.max(vp_mean + vp_ste))
+    cmap = get_parula_cm()
+    cmap.set_bad(color='k')
+    p_cmap = get_performance_cm(reverse=True)
+    cb_width = 0.043
 
+    # Raster plot of the sensory dendrite pre-synaptic input (which learns to predict |Delta V|)
+    data = np.nanmean(np.array([results[s][K_TIMINGS] for s in range(N_SEEDS)]), axis=0)
+    fig, axs = plt.subplots(nrows=2, ncols=1, figsize=(PANEL_WIDTH, 8 / INCH), sharey='all')
+    mean_data = np.zeros((n_batches, N_TIME_STEPS))
+    if batch_size > 1:
+        for b in range(n_batches):
+            mean_data[b, :] = np.nanmean(data[b * batch_size:(b + 1) * batch_size, :], axis=0)
     for i in range(2):
-        v_preds_outcome = get_outcome_specific(outcome=outcome_type[i], outcomes=outcomes, values=v_preds)
-        v_preds_outcome = np.array([v_preds_outcome[s][-n_expert_t:, :] for s in range(N_SEEDS)])
-        vp_mean = np.nanmean(v_preds_outcome, axis=(0, 1))
-        vp_ste = np.nanstd(v_preds_outcome, axis=(0, 1)) / np.sqrt(N_SEEDS)
-        x = np.array(list(range(len(vp_mean))))
-        axs[0, i].fill_between(x, vp_mean - vp_ste, vp_mean + vp_ste, color="k", alpha=0.3, linewidth=0.)
-        axs[0, i].plot(vp_mean, "k", alpha=0.5, label="$\widehat{V}$")
+        c_map_ax = axs[i].inset_axes([-cb_width, 0, cb_width, 1], zorder=-10)
+        cb = matplotlib.colorbar.ColorbarBase(c_map_ax, cmap=p_cmap, orientation='vertical')
+        cb.outline.set_visible(False)
+        cb.set_ticks([])
+        cb.set_label('Trial ID', labelpad=-15)
+        cb.ax.tick_params(size=0)
 
-        dv_dt = np.diff(v_preds_outcome, axis=2)
-        for j in [1, 2]:
-            if j == 1:
-                y = dv_dt
+    # Plot traces of the sensory dendrite synapse strengths and of the pyramidal neuron gains
+    trials = np.linspace(t_min, t_max, n_batches, endpoint=True)
+    plot_cols = [COL_PRE, COL_T1, COL_T2, COL_DISTRACTOR]
+    idxs = [0, 1, 2, np.arange(3, N_Z)]
+    axes = (0, 0, 0, (0, 2))
+    keys = [K_W_AP, K_GAIN]
+    x_ticks = [[0, 0.5, 1], [0, 2, 4, 6, 8, 10]]
+    x_labs = [r'Apical synaptic weight $w^\mathrm{ap}$', r'Apical gain $g$']
+    labels = ['Cue neuron', 'Go neuron', 'NoGo neuron', 'Other neurons']
+    for row in range(2):
+        data = np.array([results[s][keys[row]] for s in range(N_SEEDS)])
+        mean_data = np.zeros((n_batches, 4))
+        for i in range(4):
+            st_err = np.zeros(n_batches)
+            if batch_size > 1:
+                for b in range(n_batches):
+                    mean_data[b, i] = np.nanmean(data[:, b * batch_size:(b + 1) * batch_size, idxs[i]])
+                    st_err[b] = np.nanstd(data[:, b * batch_size:(b + 1) * batch_size, idxs[i]]) / np.sqrt(batch_size)
             else:
-                y = np.abs(dv_dt)
-            dvdt_mean = np.nanmean(y, axis=(0, 1))
-            dvdt_ste = np.nanstd(y, axis=(0, 1)) / np.sqrt(N_SEEDS)
-            x = np.array(list(range(y.shape[2])))
-            axs[j, i].bar(x=x + 0.5, height=dvdt_mean, width=0.9, color="k", alpha=0.6, yerr=dvdt_ste, bottom=0.)
-            axs[j-1, i].set_xticks(ticks=[])
-        axs[2, i].set_xticks(ticks=[TONE_T + 0.5, TEXTURE_T + 0.5, TONE_T + 4 * HZ + 1.5],
-                             labels=["Cue", "Touch", "Outcome"])
-        for j in range(3):
-            half_width = 0.023 * (top - bottoms[j])
-            y_lim_min = bottoms[j] - 2 * half_width
-            nt = bottoms[j] - half_width
-            plot_t(ax=axs[j, i], y=nt, iti=iti)
-            axs[j, i].plot([-iti * HZ, TONE_T + 4 * HZ + 3], [0., 0.], 'k--')
-            axs[j, i].set_ylim([y_lim_min, top])
-            axs[j, i].set_xlim([-iti * HZ, TONE_T + 4 * HZ + 3])
-            axs[j, i].spines[['right', 'top']].set_visible(False)
-            axs[j, i].spines['left'].set_bounds(y_lim_min, 1)
-            axs[j, 0].set_yticks([0, 1])
-            axs[j, 1].set_yticks([0, 1], ['', ''])
-    axs[0, 0].title.set_text('Hit')
-    axs[0, 1].title.set_text('CR')
-    axs[0, 0].set_ylabel(ylabel='State value estimate $\widehat{V}$')
-    axs[1, 0].set_ylabel(ylabel='Change of value  $\Delta \widehat{V}$')
-    axs[2, 0].set_ylabel(ylabel='Unsigned change of value $|\Delta \widehat{V}|$')
+                mean_data[:, i] = np.nanmean(data[:, :, idxs[i]], axis=axes[i])
+                st_err = np.nanstd(data[:, :, idxs[i]], axis=axes[i])
+            axs[row].fill_betweenx(trials, mean_data[:, i] - st_err, mean_data[:, i] + st_err,
+                                          color=plot_cols[i], alpha=0.3, linewidth=0.)
+        for i in range(4):
+            axs[row].plot(mean_data[:, i], trials, plot_cols[i], label=labels[i])
+        axs[row].spines[['right', 'top', 'left']].set_visible(False)
+        axs[row].set_xlabel(x_labs[row])
+        axs[row].set_xticks(x_ticks[row])
+        axs[row].set_xlim([x_ticks[row][0], x_ticks[row][-1]])
+        axs[row].set_yticks([])
+        axs[row].set_ylim([t_min, t_max])
+        axs[row].invert_yaxis()
 
-    adjust_figure(fig=fig)
-    save_or_show(saving=saving, plot_dir=PLOT_DIR, plot_name='fig_3d_expert_v_pred', plot_dpi=300)
+    axs[0].legend(frameon=False, bbox_to_anchor=(1., 1.1), loc='upper right')
+    adjust_figure(fig=fig, h_space=0.5)
+    save_or_show(saving=saving, plot_dir=PLOT_DIR, plot_name=f'fig_4f_wap_g', plot_dpi=250)
 
 
-def f3e_apical_window_traces(saving=True, verbose: bool = False) -> None:
+def f4g_apical_window_traces(saving=True, verbose: bool = False) -> None:
     """
-    Evolution of apical activity with learning during different trial windows and for each dendrite type and each trial
-    type (Hit, CR, Miss, FA).
+    Evolution of apical activity with learning during different trial windows and for each dendrite type.
     :param saving: boolean encoding whether to save (or just display) the plot.
     :param verbose: whether to print out p-values
     """
-
-    stat_i = 0
-    batch_size = 50
-    nt = min(N_TRIALS, 500 + N_EXPERTS)
-    p_cmap = get_performance_cm()
-    cb_width = 0.05
-    outcome_types = [Outcome.HIT, Outcome.CR, Outcome.FA, Outcome.MISS]
-    y_labels = ['Hit', 'CR', 'FA', 'Miss']
-    labels = ["Cue", "Touch", "Outcome", "Outcome"]
-    tcolors = [COL_SENSORY, COL_TEXTURE, COL_OUTCOME, COL_OUTCOME]
-    axes = [0, 0, 0, 1]
-    titles = ["Sensory dendrites", "Reward dendrites"]
-    title_col = [COL_SENSORY, COL_OUTCOME]
-
-    # Get data and initialize data containers
-    n_seeds = N_SEEDS
-    rs = get_results(expert_aligned=True)
-    outcomes = [rs[s][K_OUTCOME] for s in range(n_seeds)]
-    apical_sensory_trial = [rs[s][K_DENDRITE_SENSORY] for s in range(n_seeds)]
-    apical_outcome_trial = [rs[s][K_DENDRITE_OUTCOME] for s in range(n_seeds)]
-    learning_phase_trials = (np.arange(150), np.arange(350, 500), np.arange(500, 650))
-    stat_data = [None for _ in range(3 * 4 * len(outcome_types))]
-
-    # Plot data
-    set_style()
-    fig, axs = plt.subplots(nrows=len(outcome_types), ncols=len(titles), figsize=(1.5 * PANEL_WIDTH, 3 * PANEL_HEIGHT))
-    for i in range(len(outcome_types)):
-        apical_sensory = get_outcome_specific(outcome=outcome_types[i], outcomes=outcomes, values=apical_sensory_trial)
-        apical_outcome = get_outcome_specific(outcome=outcome_types[i], outcomes=outcomes, values=apical_outcome_trial)
-        ys = np.array([[apical_sensory[s][:, TONE_T] for s in range(n_seeds)],
-                      [apical_sensory[s][:, TEXTURE_T] for s in range(n_seeds)],
-                       [apical_sensory[s][:, -1] for s in range(n_seeds)],
-                       apical_outcome])
-        for j in range(4):
-            for t in range(3):
-                data = ys[j, :, learning_phase_trials[t]]
-                with catch_warnings():
-                    simplefilter("ignore", category=RuntimeWarning)
-                    data = np.nanmean(data, axis=1)
-                data = data[~np.isnan(data)]
-                stat_data[stat_i] = data
-                stat_i += 1
-        for j in reversed(range(len(tcolors))):
-            y = {"mean": batch_nan_stat(ys[j, :, :], batch_size=batch_size),
-                 "std": batch_nan_stat(ys[j, :, :], batch_size=batch_size, stat='std') / np.sqrt(N_SEEDS)}
-            trials = np.linspace(start=N_EXPERTS-nt, stop=N_EXPERTS, num=len(y['mean']), endpoint=False)
-            plot_trace(trials, y, color=tcolors[j], label=labels[j], ax=axs[i, axes[j]], alpha=0.2)
-        for j in range(len(titles)):
-            axs[i, j].set_ylim([-0.05, 1.25])
-            axs[i, j].spines['top'].set_visible(False)
-            axs[i, j].spines['right'].set_visible(False)
-            axs[i, j].set_yticks([0, 0.25, 0.5, 0.75, 1., 1.25])
-            axs[i, j].set_yticklabels([0., "", 0.5, "", 1., ""])
-            axs[i, j].spines['left'].set_bounds(0, 1.25)
-            c_map_ax = axs[i, j].inset_axes([0, 0., 1, cb_width])
-            cb = matplotlib.colorbar.ColorbarBase(c_map_ax, cmap=p_cmap, orientation='horizontal')
-            cb.outline.set_visible(False)
-            cb.set_ticks([])
-        axs[i, 0].set_ylabel(y_labels[i], labelpad=8)
-    for j in range(len(titles)):
-        tit = axs[0, j].set_title(titles[j], color=title_col[j])
-        tit.set_path_effects([withStroke(linewidth=1, foreground='k')])
-        axs[-1, j].set_xlabel("Trial")
-    axs[0, 0].legend(loc='center left', frameon=False)
-
-    # Stat testing
-    y = 1.05
-    y_add = [0., 0.08, 0.16, 0.16]
-    stat_i = 0
-    outcome_type = {Outcome.HIT: 'Hit', Outcome.CR: 'CR', Outcome.FA: 'FA', Outcome.MISS: 'Miss'}
-    timing = ['Tone', 'Texture', 'Outcome', 'Outcome']
-    dendrite = ['SenDen', 'SenDen', 'SenDen', 'OutDen']
-    idx_pair = [[0, 1], [1, 2], [0, 2]]
-    str_pair = ['naïve vs. learn', 'learn vs. expert', 'naïve vs. expert']
-    sx = (N_EXPERTS - 500) / 2.
-    stat_style = {'va': 'center', 'ha': 'center'}
-    ks = [0, 1, 2]
-    filterwarnings('error')
-    for i in range(len(outcome_types)):
-        for j in range(4):
-            sy = y + y_add[j]
-            axs[i, axes[j]].plot([-500, N_EXPERTS], [sy, sy], tcolors[j], clip_on=False, lw=AXIS_WIDTH)
-            if verbose:
-                print(outcome_type[outcome_types[i]], dendrite[j], timing[j], ':')
-            try:
-                p_values = tukey_hsd(*tuple(stat_data[stat_i:stat_i + 3])).pvalue
-            except RuntimeWarning:
-                p_values = np.array([[1., 1., 1.], [1., 1., 1.], [1., 1., 1.]])
-            for k in ks:
-                s = get_significance(p_value=p_values[idx_pair[k][0], idx_pair[k][1]])
-                if k == 2:
-                    if s == get_significance(1.):
-                        axs[i, axes[j]].text(sx, sy + 0.04, s, color=tcolors[j], **stat_style)
-                    else:
-                        axs[i, axes[j]].text(sx, sy + 0.01, s, weight='bold', color=tcolors[j], **stat_style)
-                if verbose:
-                    print(f'  - {str_pair[k]} {s} {p_values[idx_pair[k][0], idx_pair[k][1]]:.1e}')
-            stat_i += 3
-    resetwarnings()
-
-    adjust_figure(fig=fig, h_space=0.25, w_space=0.2)
-    save_or_show(saving=saving, plot_dir=PLOT_DIR, plot_dpi=300, plot_name='fig_3e_apical_traces')
+    plot_apical_trace_boxplot(saving=saving, verbose=verbose)
 
 
-def f4f_performance(saving=True) -> None:
+def f4h_performance(saving=True) -> None:
     """
     Performance traces with and without apical inhibition
     :param saving: boolean encoding whether to save (or just display) the plot.
@@ -786,10 +1026,10 @@ def f4f_performance(saving=True) -> None:
     ax.spines['right'].set_visible(False)
     ax.yaxis.set_label_coords(-0.18, 0.6)
     adjust_figure(fig=fig)
-    save_or_show(saving=saving, plot_dir=PLOT_DIR, plot_name='fig_4f_performance')
+    save_or_show(saving=saving, plot_dir=PLOT_DIR, plot_name='fig_4h_performance')
 
 
-def f4g_expert_trials(saving=True, verbose: bool = False) -> None:
+def f4h_expert_trials(saving=True, verbose: bool = False) -> None:
     """
     Distribution of number of trials necessary to reach expert performance depending on whether the apical dendrites
     were inhibited during the first 1800 trials or not.
@@ -802,8 +1042,8 @@ def f4g_expert_trials(saving=True, verbose: bool = False) -> None:
     face_col = ['grey', 'white']
     plot_order = [2, 0]
     simulations = [Simulation.DEFAULT, Simulation.APICAL_INHIBITION]
-    xp_ts = [None, None]
-    for sim in [1, 0]:
+    xp_ts: list[np.ndarray] = [np.zeros(0), np.zeros(0)]
+    for sim in (1, 0):
         results = get_results(simulation=simulations[sim])
         expert_t = [results[s][K_EXPERT_T] for s in range(N_SEEDS)]
         xp_ts[sim] = np.array(expert_t)
@@ -820,7 +1060,7 @@ def f4g_expert_trials(saving=True, verbose: bool = False) -> None:
     plt.xlim([0, N_TRIALS_AP_INH])
     plt.yticks([2, 1, 0], ["Unperturbed", "Corrected", "Perturbed"])
 
-    p_values = [ranksums(xp_ts[0], xp_ts[1])[1], ranksums(xp_ts[0], xp_ts[1] - 1800)[1]]
+    p_values = [stats.ranksums(xp_ts[0], xp_ts[1])[1], stats.ranksums(xp_ts[0], xp_ts[1] - 1800)[1]]
     if verbose:
         print(f'Perturbed vs. Unperturbed {get_significance(p_values[0])} {p_values[0]:.1e}')
         print(f'Corrected vs. Unperturbed {get_significance(p_values[1])} {p_values[1]:.1e}')
@@ -838,7 +1078,7 @@ def f4g_expert_trials(saving=True, verbose: bool = False) -> None:
     ax.spines['top'].set_visible(False)
     ax.spines['right'].set_visible(False)
     adjust_figure(fig=fig)
-    save_or_show(saving=saving, plot_dir=PLOT_DIR, plot_name='fig_4g_expert_trials')
+    save_or_show(saving=saving, plot_dir=PLOT_DIR, plot_name='fig_4h_expert_trials')
 
 
 def f4h_w_ap(saving=True) -> None:
@@ -851,7 +1091,7 @@ def f4h_w_ap(saving=True) -> None:
     set_style()
     fig, ax = plt.subplots(figsize=(PANEL_WIDTH, PANEL_HEIGHT))
     sims = [Simulation.DEFAULT, Simulation.APICAL_INHIBITION]
-    plotcols = ['k', COL_RESTORED]
+    plotcols = ['grey', COL_RESTORED]
     for i in [1, 0]:
         results = get_results(simulation=sims[i])
         trials = np.arange(len(results[0][K_W_AP]))
@@ -891,7 +1131,7 @@ def f4h_w_ap(saving=True) -> None:
     save_or_show(saving=saving, plot_dir=PLOT_DIR, plot_name='fig_4h_w_ap')
 
 
-def fs12bc_transfer_f(saving=True) -> None:
+def fs11bc_transfer_f(saving=True) -> None:
     """
     Transfer functions mapping apical excitation to apical activation, apical activation to multiplicative gain and the
     combination of both, which gives the multiplicative gain depending on the apical excitation.
@@ -927,189 +1167,37 @@ def fs12bc_transfer_f(saving=True) -> None:
         axs[c].legend(loc='lower right')
 
     adjust_figure(fig=fig)
-    save_or_show(saving=saving, plot_dir=PLOT_DIR, plot_dpi=300, plot_name='fig_s12bc_transfer_functions')
+    save_or_show(saving=saving, plot_dir=PLOT_DIR, plot_dpi=300, plot_name='fig_s11bc_transfer_functions')
 
 
-def fs12dfg_sen_dendrite(saving: bool = True, expert_aligned: bool = False) -> None:
+def fs11d_expert_v_pred(saving=True) -> None:
     """
-    Multi-panel plot showing:
-    - Evolution of the pre-synaptic input to sensory dendrites across learning as raster plot
-    - Evolution of the sensory dendrite synaptic weight strengths depending on the bottom-up (basal) selectivity of the
-      pyramidal neurons (with learning)
-    - Evolution of the multiplicative gains of different stimuli with learning
+    Dynamic of the state value estimate (V) during HFA trials for expert agents and the
+    corresponding dynamic changes of the estimate (Delta V) and unsigned changes of the estimate (|Delta V|).
     :param saving: boolean encoding whether to save (or just display) the plot.
-    :param expert_aligned: Whether to align trials to the first expert trial
     """
-
-    # Initializations and loading data
-    if expert_aligned:
-        y_ticks = [-400, -200, 0]
-        n_trials = 500 + N_EXPERTS
-        t_min, t_max = 1 - n_trials + N_EXPERTS, N_EXPERTS
-    else:
-        y_ticks = [0, 500, 1000, 1500]
-        n_trials = N_TRIALS
-        t_min, t_max = 1, N_TRIALS
-    results = get_results(expert_aligned=expert_aligned)
-    extent = (-HZ, TONE_T + 4 * HZ + 3, t_max, t_min)
-    nt = t_max + (t_max-t_min) * 0.02
-    y_bottom = t_max + (t_max-t_min) * 0.04
-    y_top = t_min
-    batch_size = 50
-    n_batches = n_trials // batch_size
-    set_style()
-    cmap = get_parula_cm()
-    cmap.set_bad(color='k')
-    p_cmap = get_performance_cm(reverse=True)
-    cb_width = 0.043
-
-    # Raster plot of the sensory dendrite pre-synaptic input (which learns to predict |Delta V|)
-    data = np.nanmean(np.array([results[s][K_TIMINGS] for s in range(N_SEEDS)]), axis=0)
-    fig, axs = plt.subplots(nrows=1, ncols=3, figsize=(3 * PANEL_WIDTH, PANEL_HEIGHT))
-    mean_data = np.zeros((n_batches, N_TIME_STEPS))
-    if batch_size > 1:
-        for b in range(n_batches):
-            mean_data[b, :] = np.nanmean(data[b * batch_size:(b + 1) * batch_size, :], axis=0)
-    else:
-        mean_data = data
-    img = np.pad(array=mean_data, pad_width=((0, 0), (HZ, 1)))
-    axs[0].imshow(img, aspect='auto', extent=extent, vmin=0., vmax=1., cmap=cmap)
-    plot_t(ax=axs[0], y=nt)
-    axs[0].set_xlim([-1.03 - HZ, None])
-    axs[0].set_ylim([y_bottom, None])
-    axs[0].set_xlabel('Trial time')
-    axs[0].set_xticks([TONE_T + 0.5, TEXTURE_T + 0.5, TONE_T + 4 * HZ + 1.5], ['Tone', 'Texture', 'Outcome'], zorder=10)
-    axs[0].set_yticks(y_ticks)
-    axs[0].set_ylabel('Trial ID')
-    for pos in ['right', 'top', 'bottom', 'left']:
-        axs[0].spines[pos].set_visible(False)
-    for i in range(3):
-        c_map_ax = axs[i].inset_axes([0., cb_width, cb_width, 1 - cb_width], zorder=-10)
-        cb = matplotlib.colorbar.ColorbarBase(c_map_ax, cmap=p_cmap, orientation='vertical')
-        cb.outline.set_visible(False)
-        cb.set_ticks([])
-
-    # Plot traces of the sensory dendrite synapse strengths and of the pyramidal neuron gains
-    trials = np.linspace(t_min, t_max, n_batches, endpoint=True)
-    plot_cols = [COL_PRE, COL_T1, COL_T2, COL_TONE]
-    idxs = [0, 1, 2, np.arange(3, N_Z)]
-    axes = (0, 0, 0, (0, 2))
-    keys = [K_W_AP, K_GAIN]
-    axis_id = [1, 2]
-    x_ticks = [[0, 0.5, 1], [0, 2, 4, 6, 8, 10]]
-    x_labs = [r'Apical weight $w^\mathrm{ap}$', r'Apical gain $g$']
-    labels = ['Tone', 'Go Texture', 'No-Go Texture', 'Distractors']
-    for c in range(2):
-        data = np.array([results[s][keys[c]] for s in range(N_SEEDS)])
-        mean_data = np.zeros((n_batches, 4))
-        for i in range(4):
-            st_err = np.zeros(n_batches)
-            if batch_size > 1:
-                for b in range(n_batches):
-                    mean_data[b, i] = np.nanmean(data[:, b * batch_size:(b + 1) * batch_size, idxs[i]])
-                    st_err[b] = np.nanstd(data[:, b * batch_size:(b + 1) * batch_size, idxs[i]]) / np.sqrt(batch_size)
-            else:
-                mean_data[:, i] = np.nanmean(data[:, :, idxs[i]], axis=axes[i])
-                st_err = np.nanstd(data[:, :, idxs[i]], axis=axes[i])
-            axs[axis_id[c]].fill_betweenx(trials, mean_data[:, i] - st_err, mean_data[:, i] + st_err,
-                                          color=plot_cols[i], alpha=0.3, linewidth=0.)
-        for i in range(4):
-            axs[axis_id[c]].plot(mean_data[:, i], trials, plot_cols[i], label=labels[i])
-        axs[axis_id[c]].set_xlabel(x_labs[c])
-        axs[axis_id[c]].set_xticks(x_ticks[c])
-        axs[axis_id[c]].set_yticks(y_ticks, ['' for _ in range(len(y_ticks))])
-        axs[axis_id[c]].set_ylim([y_top, y_bottom])
-        axs[axis_id[c]].invert_yaxis()
-        axs[axis_id[c]].legend(frameon=False)
-
-    adjust_figure(fig=fig, w_space=0.1)
-    save_or_show(saving=saving, plot_dir=PLOT_DIR, plot_name=f'fig_s12dfg_dsen_wap_g')
+    plot_v_hat(saving=saving, outcome_types=(Outcome.FA,), save_name='fig_s11d_expert_v_pred')
 
 
-def fs12e_unsigned_td_delta(saving: bool = True, expert_aligned: bool = False) -> None:
-    """
-    Raster plots of the unsigned TD delta for each time step across learning and for each trial type.
-    :param saving: boolean encoding whether to save (or just display) the plot.
-    :param expert_aligned: Whether to align trials to the first expert trial
-    """
-    rows = 2
-    cols = 2
-    batch_size = 50
-    if expert_aligned:
-        y_ticks = [-400, -200, 0]
-        n_trials = 500 + N_EXPERTS
-        t_min, t_max = 1 - n_trials + N_EXPERTS, N_EXPERTS
-    else:
-        y_ticks = [0, 500, 1000, 1500]
-        n_trials = N_TRIALS
-        t_min, t_max = 1, N_TRIALS
-    nt = t_max + (t_max-t_min) * 0.02
-    y_bottom = t_max + (t_max-t_min) * 0.04
-    n_batches = n_trials // batch_size
-    set_style()
-    cmap = get_parula_cm()
-    cmap.set_bad(color='k')
-    p_cmap = get_performance_cm(reverse=True)
-    cb_width = 0.041
-    results = get_results(expert_aligned=expert_aligned)
-    outcomes = [results[s][K_OUTCOME] for s in range(N_SEEDS)]
-    data = [results[s][K_TD_DELTA] for s in range(N_SEEDS)]
-    outcome_types = [[Outcome.HIT, Outcome.MISS], [Outcome.FA, Outcome.CR]]
-    fig, axs = plt.subplots(nrows=rows, ncols=cols, figsize=(cols * PANEL_WIDTH, rows * PANEL_HEIGHT))
-    for i in range(rows):
-        for j in range(cols):
-            out_spec_data = np.abs(np.array(get_outcome_specific(outcome=outcome_types[i][j], outcomes=outcomes,
-                                                                 values=data)))
-            if batch_size > 1:
-                mean_data = np.zeros((n_batches, out_spec_data.shape[2]))
-                for b in range(n_batches):
-                    mean_data[b, :] = np.nanmean(out_spec_data[:, b * batch_size:(b + 1) * batch_size, :], axis=(0, 1))
-            else:
-                mean_data = np.nanmean(out_spec_data, axis=0)
-            img = np.pad(array=mean_data, pad_width=((0, 0), (HZ, 1)))
-            axs[i, j].imshow(img, aspect='auto', extent=(-HZ, TONE_T + 4 * HZ + 3, t_max, t_min),
-                             vmin=apical_transfer(0.), vmax=1., cmap=cmap)
-            plot_t(ax=axs[i, j], y=nt)
-            c_map_ax = axs[i, j].inset_axes([0., cb_width, cb_width, 1 - cb_width], zorder=-10)
-            cb = matplotlib.colorbar.ColorbarBase(c_map_ax, cmap=p_cmap, orientation='vertical')
-            cb.outline.set_visible(False)
-            cb.set_ticks([])
-            axs[i, j].set_ylim([y_bottom, None])
-            axs[i, j].set_xlim([-0.98 - HZ, None])
-            for pos in ['right', 'top', 'bottom', 'left']:
-                axs[i, j].spines[pos].set_visible(False)
-            if i == 1:
-                axs[i, j].set_xlabel('Trial time')
-                axs[i, j].set_xticks([TONE_T + 0.5, TEXTURE_T + 0.5, TONE_T + 4 * HZ + 1.5],
-                                     ['Tone', 'Texture', 'Outcome'], zorder=10)
-            else:
-                axs[i, j].set_xticks([])
-            if j == 0:
-                axs[i, j].set_yticks(y_ticks)
-                if i == 0:
-                    axs[i, j].set_ylabel('Go Texture\n\nTrial ID')
-                else:
-                    axs[i, j].set_ylabel('NoGo Texture\n\nTrial ID')
-            else:
-                axs[i, j].set_yticks(y_ticks, [''] * len(y_ticks))
-    axs[0, 0].title.set_text('Lick')
-    axs[0, 1].title.set_text('No Lick')
-
-    adjust_figure(fig=fig, h_space=0.05)
-    save_or_show(saving=saving, plot_dir=PLOT_DIR, plot_name='fig_s12e_unsigned_td', plot_dpi=500)
-
-
-def fs13c_apical_dendrites_raster_plots(saving: bool = True) -> None:
+def fs11e_apical_dendrites_raster_plots(saving: bool = True) -> None:
     """
     Raster plots of the evolution of responses for each apical dendrite type (sensory and outcome dendrites) for the go
     and the no-go texture selective neuron during FA trials.
     :param saving: boolean encoding whether to save (or just display) the plot.
     """
     plot_apical_raster(outcome=Outcome.FA)
-    save_or_show(saving=saving, plot_dir=PLOT_DIR, plot_name='fig_s13c_apical_fa', plot_dpi=500)
+    save_or_show(saving=saving, plot_dir=PLOT_DIR, plot_name='fig_s11e_apical_fa', plot_dpi=300)
 
 
-def fs14b_wap_traces(saving: bool = False):
+def fs12a_performance_eg(saving: bool = True) -> None:
+    """
+    Plot an example performance trace for the default simulation
+    :param saving: boolean encoding whether to save (or just display) the plot.
+    """
+    plot_perf_eg(saving=saving, mean=False, sim=Simulation.MIXED_SELECTIVITY, save_name='fig_s12a_performance_example')
+
+
+def fs12b_wap_traces(saving: bool = False):
     """
     Traces of the sensory dendrite synapse strengths for pyramidal neurons depending on their bottom-up selectivity for
     the go-stimulus (which is encoded by the basal synaptic strength of the texture 1 input).
@@ -1163,10 +1251,10 @@ def fs14b_wap_traces(saving: bool = False):
     axs[1].set_xlabel('Trial')
 
     adjust_figure(fig=fig, h_space=0.3)
-    save_or_show(saving=saving, plot_dir=PLOT_DIR, plot_name='fig_s14b_w_ap_traces')
+    save_or_show(saving=saving, plot_dir=PLOT_DIR, plot_name='fig_s12b_w_ap_traces')
 
 
-def fs14c_theta0(saving: bool = False) -> None:
+def fs12b_theta0(saving: bool = False) -> None:
     """
     Sensory dendrite synapse strength after 1800 trials for pyramidal neurons depending on their bottom-up selectivity
     for the go-stimulus (which is encoded by the basal synaptic strength of the texture 1 input) and on the chosen
@@ -1223,10 +1311,10 @@ def fs14c_theta0(saving: bool = False) -> None:
     axs[0].set_ylabel('$w^{ap}$')
 
     adjust_figure(fig=fig, w_space=0.15)
-    save_or_show(saving=saving, plot_dir=PLOT_DIR, plot_name='figs_14c_theta_0')
+    save_or_show(saving=saving, plot_dir=PLOT_DIR, plot_name='fig_s12b_theta_0')
 
 
-def fs14d_selectivity_traces(saving: bool = False) -> None:
+def fs12c_selectivity_traces(saving: bool = False) -> None:
     """
     Evolution of the sensory pyramidal neuron selectivity for the go or no-go stimulus as learning progresses and
     depending on the bottom-up selectivity of the neurons (encoded as the difference in the basal synaptic weights
@@ -1244,8 +1332,8 @@ def fs14d_selectivity_traces(saving: bool = False) -> None:
     x_s2 = nan_array((N_SEEDS, N_TRIALS, N_Z))
     bin_idxs = {}
     for s in range(N_SEEDS):
-        x_s1[s, :, :] = get_texture_specific(texture=True, outcomes=results[s][K_OUTCOME], values=results[s][K_X_SOM])
-        x_s2[s, :, :] = get_texture_specific(texture=False, outcomes=results[s][K_OUTCOME], values=results[s][K_X_SOM])
+        x_s1[s, :, :] = get_texture_specific(texture=True, outcomes=results[s][K_OUTCOME], values=results[s][K_X_SOM_TXT])
+        x_s2[s, :, :] = get_texture_specific(texture=False, outcomes=results[s][K_OUTCOME], values=results[s][K_X_SOM_TXT])
         w_bas = results[s][K_W_BAS]
         for i in range(N_Z):
             b = max(min(round((w_bas[T1_IDX, i] - w_bas[T2_IDX, i]).item() * bin_factor), bin_max), -bin_max)
@@ -1287,10 +1375,10 @@ def fs14d_selectivity_traces(saving: bool = False) -> None:
     axs.spines['left'].set_bounds(-4, 4)
 
     adjust_figure(fig=fig, h_space=0.1)
-    save_or_show(saving=saving, plot_dir=PLOT_DIR, plot_name='fig_s14d_selectivity_traces')
+    save_or_show(saving=saving, plot_dir=PLOT_DIR, plot_name='fig_s12c_selectivity_traces')
 
 
-def fs14e_selectivity_distribution(saving: bool = False) -> None:
+def fs12cd_selectivity_distribution(saving: bool = False) -> None:
     """
     Distribution (over all neurons that had a minimal response in the texture window) of the go-stimulus vs. the
     no-go stimulus selectivity before and after learning. Non-selective neurons are shown as neurons that had a minimal
@@ -1305,10 +1393,14 @@ def fs14e_selectivity_distribution(saving: bool = False) -> None:
     txt_responsive = []
     tr_threshold = 0.1
     for s in range(N_SEEDS):
-        x_s1[s, :, :] = get_texture_specific(texture=True, outcomes=results[s][K_OUTCOME], values=results[s][K_X_SOM])
-        x_s2[s, :, :] = get_texture_specific(texture=False, outcomes=results[s][K_OUTCOME], values=results[s][K_X_SOM])
+        x_s1[s, :, :] = get_texture_specific(
+            texture=True, outcomes=results[s][K_OUTCOME], values=results[s][K_X_SOM_TXT]
+        )
+        x_s2[s, :, :] = get_texture_specific(
+            texture=False, outcomes=results[s][K_OUTCOME], values=results[s][K_X_SOM_TXT]
+        )
         for i in range(N_Z):
-            if np.mean(results[s][K_X_SOM][:, i]) > tr_threshold:
+            if np.mean(results[s][K_X_SOM_TXT][:, i]) > tr_threshold:
                 txt_responsive += [[s, i]]
     nn = N_SEEDS * N_Z
     bin_edges = np.arange(-4, 4, 0.2)
@@ -1327,7 +1419,7 @@ def fs14e_selectivity_distribution(saving: bool = False) -> None:
         txt_responsive = []
         for s in range(N_SEEDS):
             for j in range(N_Z):
-                if np.mean(results[s][K_X_SOM][phase[i][0]:phase[i][1], j]) > tr_threshold:
+                if np.mean(results[s][K_X_SOM_TXT][phase[i][0]:phase[i][1], j]) > tr_threshold:
                     txt_responsive += [[s, j]]
 
         if tr_threshold is not None:
@@ -1369,15 +1461,18 @@ def fs14e_selectivity_distribution(saving: bool = False) -> None:
     axs[1].legend(handles=[p1, p2, p3, p4], handlelength=1, loc='upper right', frameon=False)
 
     adjust_figure(fig=fig, h_space=0.1)
-    save_or_show(saving=saving, plot_dir=PLOT_DIR, plot_name='fig_s14e_selectivity_distributions')
+    save_or_show(saving=saving, plot_dir=PLOT_DIR, plot_name='fig_s12c_selectivity_distributions')
 
 
-def fs14a_performance_eg(saving: bool = True) -> None:
+def fs13_apical_dendrites_traces_boxplots(saving: bool = True, verbose: bool = False) -> None:
     """
-    Plot an example performance trace for the default simulation
+    Evolution of apical activity with learning during different trial windows and for each dendrite type and each trial
+    type (Hit, CR, Miss, FA).
     :param saving: boolean encoding whether to save (or just display) the plot.
+    :param verbose: whether to print out p-values
     """
-    plot_perf_eg(saving=saving, mean=False, sim=Simulation.MIXED_SELECTIVITY, save_name='fig_s14a_performance_example')
+    for outcome in (Outcome.HIT, Outcome.CR, Outcome.FA):
+        plot_apical_trace_boxplot(saving=saving, verbose=verbose, outcome=outcome)
 
 
 def plot_all(saving: bool = True) -> None:
@@ -1385,21 +1480,26 @@ def plot_all(saving: bool = True) -> None:
     Plot all the panels.
     :param saving: boolean encoding whether to save (or just display) the plot.
     """
-    f3b_performance_eg(saving=saving)  # Performance example for default simulation
-    f3c_apical_dendrites_raster_plots(saving=saving)  # S1 apical activity raster plot for Hit and CR
-    f3c_soma_raster_plots(saving=saving)  # S1 output raster plot
-    f3d_expert_v_pred(saving=saving)  # Expert V pred trace
-    f3e_apical_window_traces(saving=saving)  # Apical activity evolution with learning for different time windows
-    f4f_performance(saving=saving)  # Performances traces with and without apical inhibition
-    f4g_expert_trials(saving=saving)  # Expert times
+    f4c_performance_eg(saving=saving)  # Performance example for default simulation
+    f4d_expert_v_pred(saving=saving)  # Expert V pred trace for Hit and CR trials
+    f4e_apical_dendrites_raster_plots(saving=saving)  # S1 apical activity raster plot for Hit and CR
+    f4e_soma_raster_plots(saving=saving)  # S1 output raster plot
+    f4f_sen_dendrite(saving=saving)  # w^ap and gain
+    f4g_apical_window_traces(saving=saving)  # Apical activity evolution with learning for different time windows
+    f4h_performance(saving=saving)  # Performances traces with and without apical inhibition
+    f4h_expert_trials(saving=saving)  # Expert times
     f4h_w_ap(saving=saving)  # Top-down w^ap to S1 neurons
-    fs12bc_transfer_f(saving=saving)  # Transfer functions
-    fs12dfg_sen_dendrite(saving=saving)  # |Delta_t V|, w^ap and gain
-    fs12e_unsigned_td_delta(saving=saving)  # Unsigned TD delta raster plot
-    fs13c_apical_dendrites_raster_plots(saving=saving)  # S1 apical activity raster plot for FA
-    fs14a_performance_eg(saving=saving)  # Performance example for mixed selectivity simulation
-    fs14b_wap_traces(saving=saving)  # Evolution of apical synaptic weights
-    fs14c_theta0(saving=saving)  # Dependence on the theta_0 parameter
-    fs14d_selectivity_traces(saving=saving)  # Evolution of the selectivity with learning
-    fs14e_selectivity_distribution(saving=saving)  # Distribution of the selectivity before and after learning
+    fs11bc_transfer_f(saving=saving)  # Transfer functions
+    fs11d_expert_v_pred(saving=saving)  # Expert V pred trace for FA trials
+    fs11e_apical_dendrites_raster_plots(saving=saving)  # S1 apical activity raster plot for FA
+    fs12a_performance_eg(saving=saving)  # Performance example for mixed selectivity simulation
+    fs12b_wap_traces(saving=saving)  # Evolution of apical synaptic weights
+    fs12b_theta0(saving=saving)  # Dependence on the theta_0 parameter
+    fs12c_selectivity_traces(saving=saving)  # Evolution of the selectivity with learning
+    fs12cd_selectivity_distribution(saving=saving)  # Distribution of the selectivity before and after learning
+    fs13_apical_dendrites_traces_boxplots(saving=saving)  # S1 apical activity traces and boxplots for each trial type
     print('All panels have been plotted successfully!')
+
+
+if __name__ == '__main__':
+    plot_all()

@@ -1,8 +1,8 @@
-# Unsigned temporal difference errors in cortical L5 apical dendrites during learning
+# Error representations in apical dendrites of neocortical layer 5 neurons during learning
 
 ## Description
 
-This program runs the simulations and plots the corresponding panels described in the manuscript '[Unsigned temporal difference errors in cortical L5 dendrites during learning](https://www.biorxiv.org/content/10.1101/2021.12.28.474360v3)'. This means simulating models of mice with L5 sensory pyramidal neurons learning a go/no-go sensory discrimination task from a sensory representation plagued by distractor signals.
+This program runs the simulations and plots the corresponding panels described in the manuscript '[Error representations in apical dendrites of neocortical layer 5 neurons during learning](https://www.biorxiv.org/content/10.1101/2021.12.28.474360v3)'. This means simulating models of mice with L5 sensory pyramidal neurons learning a go/no-go sensory discrimination task from a sensory representation plagued by distractor signals.
 
 ### Installation
 
@@ -45,4 +45,4 @@ This will overwrite any simulation outcomes present in the `results` folder. The
 python main.py perf
 ```
 
-This should integrate the performances extracted by the code from Smith et al. into the pickle files in the `results` folder and will allow you to replot all of the panels. If any step is interrupted or skipped, the results files can become corrupted and can only be recovered by rerunning the simulation from the start or downloading the uncorrupted results from the github repository. In case you do not have Matlab installed and nothing was changed in the simulation code, it is also possible to skip the last step. Both the `main` and `clean` branch already contain the extracted performance traces for the default simulations. The code will therefore be able to reuse those files.
+This should integrate the performances extracted by the code from Smith et al. (2004) into the pickle files in the `results` folder and will allow you to replot all of the panels. If any step is interrupted or skipped, the results files can become corrupted and can only be recovered by rerunning the simulation from the start or downloading the uncorrupted results from the github repository. In case you do not have Matlab installed and nothing was changed in the simulation code, it is also possible to skip the last step. Both the `main` and `clean` branch already contain the extracted performance traces for the default simulations. The code will therefore be able to reuse those files.
