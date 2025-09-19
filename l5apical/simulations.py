@@ -1,3 +1,11 @@
+"""
+Module containing the code to simulate learning of a go/no-go sensory discrimination task by a mouse agent with and
+without top-down salience signal onto apical dendrites of pyramidal neurons. The simulation outcomes are saved in pickle
+files in the 'results' directory. The performance traces then have to be extracted by a Matlab script
+(from Smith et al., 2004) located in the 'Smith' directory and integrated into the pickle files by running the 'perf'
+command of the main script (which calls the load_smith_perf() function).
+"""
+
 from random import seed as rd_seed
 from random import shuffle as random_shuffle
 from pickle import load, dump, HIGHEST_PROTOCOL
@@ -27,7 +35,7 @@ class Agent:
         self.lick_activity += torch.dot(self.policy_weights, input_vec)
         self.input_history += input_vec
 
-    def act(self, go: int) -> (torch.Tensor, bool, int):
+    def act(self, go: int) -> tuple[torch.Tensor, bool, int]:
         """
         Sample an action, observe the resulting outcome and update the action-selection policy network
         :param go: Integer encoding the go stimulus (if non-zero) or the no-go stimulus (if zero)
@@ -60,14 +68,18 @@ class Agent:
         return reward, lick, correct
 
     def update(self, reward: float, x_som: torch.Tensor = None):
-        # Update policy network
+        """
+        Update policy network
+        :param reward: The reward with which to update the weights
+        :param x_som: The sensory state representation vector used as input for the policy network
+        """
         self.policy_weights += self.lr * reward * (1 - self.a_prob) * self.input_history * x_som
         self.lick_activity = torch.Tensor([0.])
         self.input_history = torch.zeros(self.policy_weights.size())
 
 
 def get_params(simulation: Simulation, theta_0: float
-               ) -> (int, int, int, list[float], float, torch.Tensor, torch.Tensor):
+               ) -> tuple[int, int, int, list[float], float, torch.Tensor, torch.Tensor, torch.Tensor]:
     """
     Initialize parameters depending on the simulation type.
     :param simulation: Simulation identifier
@@ -122,11 +134,15 @@ def simulate_seed(simulation: Simulation = Simulation.DEFAULT, seed: int = 0, th
     n_trials = N_TRIALS_AP_INH if simulation.value == Simulation.APICAL_INHIBITION.value else N_TRIALS
     n_inputs, noise_inputs, n_z, noise_ps, lr, w_bas, thetas, w_ap = get_params(simulation=simulation, theta_0=theta_0)
     tlr, lr_ap, plr, learning_rate = lr, lr, lr, lr  # Learning rates
-    tx_idxs = np.array([T1_IDX, T2_IDX])  # Indices for the texture selective neurons
+
+    # Relevant simulation time steps (first simulated time step starts with the tone cue)
+    tone_t = 0  # Timing of the tone cue (in terms of simulated time steps index)
+    texture_t = TEXTURE_T - TONE_T  # Timing of the texture (in terms of simulated time steps index)
+    outcome_t = OUTCOME_T - TONE_T  # Timing of the outcome (in terms of simulated time steps index)
     n_timings = N_TIME_STEPS  # Number of time steps simulated per trial
-    tone_t = TONE_T  # Timing of the tone cue
-    texture_t = TEXTURE_T  # Timing of the texture
-    outcome_t = n_timings - 1  # Timing of the outcome
+
+    # Basal input initializations
+    tx_idxs = torch.tensor([T1_IDX, T2_IDX])  # Indices for the texture selective neurons
     texture_xs = torch.tensor([[1.0, 1.0, 0.0], [1.0, 0.0, 1.0]])
     base_input_time_idxs = np.zeros(shape=n_inputs)  # Template for time steps at which each stimulus occurs
     base_input_time_idxs[0] = tone_t
@@ -173,7 +189,7 @@ def simulate_seed(simulation: Simulation = Simulation.DEFAULT, seed: int = 0, th
         for t in range(outcome_t):
 
             # Simulate pyramidal neurons and compute state value estimate
-            current_idxs = np.array(input_time_idxs == t)  # Get the indices of currently non-zero basal inputs
+            current_idxs = torch.Tensor(input_time_idxs == t)  # Get the indices of currently non-zero basal inputs
             x_in = torch.zeros((n_inputs,))  # Basal input vector
             x_in[current_idxs] = 1  # Set currently active basal inputs to 1
             x_bas = torch.matmul(x_in, w_bas) + x_bas_background  # Basal activations
@@ -233,7 +249,7 @@ def simulate_seed(simulation: Simulation = Simulation.DEFAULT, seed: int = 0, th
         gains = gain(x_ap)  # Multiplicative apical gains
         x_som = gains * x_bas_background  # Somatic activations (also firing rate)
         dw_weights += learning_rate * (reward - r_pred) * z_h[j, :] * (x_som - BKG)
-        actor.update(reward=reward, x_som=x_som)
+        actor.update(reward=reward.item(), x_som=x_som)
 
         # Record variables of interest for post-simulation analysis
         v_hat_h[j, outcome_t+1] = v_hat_h[j, outcome_t] - r_pred
@@ -263,7 +279,7 @@ def simulate_seed(simulation: Simulation = Simulation.DEFAULT, seed: int = 0, th
               K_W_AP: w_ap_h,
               K_TIMINGS: x_pre_t_h,
               K_W_BAS: w_bas,
-              K_X_SOM: x_som_texture_h}
+              K_X_SOM_TXT: x_som_texture_h}
 
     return result
 
